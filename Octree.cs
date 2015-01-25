@@ -10,12 +10,14 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
 public class Octree
 {
-	public OctreeFunctions data;
+	public OctreeData data;
 	public byte[] trace;
 	public delegate bool SplitPolicy(Vector3 coord,float length, byte[] trace);
+	public Octree parent = null;
 	SplitPolicy splitPolicy;
 	public Vector3 position;
 	public float boxLength;
@@ -36,12 +38,21 @@ public class Octree
 
 
 
-	public Octree (OctreeFunctions data,Vector3 position,float length,byte[] trace)
+	public Octree (OctreeData data,Vector3 position,float length,byte[] trace)
 	{
 		this.trace = trace;
 		this.position = position;
 		this.data = data;
 		this.boxLength = length;
+	}
+
+	public Octree (Octree parent,Vector3 position,float length,byte[] trace)
+	{
+		this.trace = trace;
+		this.position = position;
+		this.data = parent.data;
+		this.boxLength = length;
+		this.parent = parent;
 	}
 
 	public void Split()
@@ -53,12 +64,30 @@ public class Octree
 			List<byte> newTrace = new List<byte>(trace);
 			newTrace.Add(0);
 			child = new Octree[8];
+			ArrayList threads = new ArrayList();
 			for (byte i = 0; i < 8; i++) {
 				newTrace[newTraceSize] = i;
-				child[i] = new Octree(data,getChildPos(position,boxLength,i),newLength,newTrace.ToArray());
-				child[i].Split();
-			}
+				child[i] = new Octree(this,getChildPos(position,boxLength,i),newLength,newTrace.ToArray());
 
+				lock(data._object){
+					if(data.numThreads<data.threadLimit){
+						Thread t = new Thread(new ThreadStart(child[i].Split));
+						t.Start();
+						threads.Add(t);
+						data.numThreads++;
+						continue;
+					}
+				}
+				child[i].Split();
+
+			}
+			foreach(Thread t in threads)
+			{
+				t.Join ();
+				lock(data._object){
+					data.numThreads--;
+				}
+			}
 		}
 	}
 

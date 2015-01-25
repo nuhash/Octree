@@ -11,7 +11,7 @@ using System;
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
-public class OctreeFunctions
+public class OctreeData
 {
 	public delegate bool SplitPolicy(Vector3 coord,float length, byte[] trace);
 	public SplitPolicy splitPolicy;
@@ -19,8 +19,11 @@ public class OctreeFunctions
 	public ValueFunction valueFunction;
 	public delegate Vector3 GradientFunction(Vector3 coord);
 	public GradientFunction gradientFunction;
+	public int numThreads = 0;
+	public int threadLimit = 4;
+	public readonly object _object = new object();
 
-	public OctreeFunctions ()
+	public OctreeData ()
 	{
 
 	}
