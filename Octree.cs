@@ -10,35 +10,41 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Threading;
 using UnityEngine;
+using NuHash.UsefulUtilities;
 public class Octree
 {
-	public OctreeFunctions data;
-	public byte[] trace;
-	public delegate bool SplitPolicy(Vector3 coord,float length, byte[] trace);
-	SplitPolicy splitPolicy;
+	public OctreeData data;
+	public byte[] baseTrace;
 	public Vector3 position;
 	public float boxLength;
-	Octree[] child=null;
+	List<byte[]> leaves = new List<byte[]>();
+	Int64 queuedItems;
+	readonly object _lock = new object();
 
-	public bool IsSplit {
-		get{return (child != null);}
+	private class ThreadObject{
+		public byte[] trace;
+		public float length;
+		public Vector3 pos;
 	}
+
+//	public bool IsSplit {
+//		get{return (child != null);}
+//	}
+//	
+//	public Octree Child(int idx) {
+//		if(idx>7 || idx<0 || !this.IsSplit)
+//		{
+//			Debug.LogError("No children available or index is out of range");
+//			return null;
+//		}
+//		return child[idx];
+//	}
 	
-	public Octree Child(int idx) {
-		if(idx>7 || idx<0 || !this.IsSplit)
-		{
-			Debug.LogError("No children available or index is out of range");
-			return null;
-		}
-		return child[idx];
-	}
-
-
-
-	public Octree (OctreeFunctions data,Vector3 position,float length,byte[] trace)
+	public Octree (OctreeData data,Vector3 position,float length,byte[] trace)
 	{
-		this.trace = trace;
+		this.baseTrace = trace;
 		this.position = position;
 		this.data = data;
 		this.boxLength = length;
@@ -46,23 +52,111 @@ public class Octree
 
 	public void Split()
 	{
-		if(data.splitPolicy(position,boxLength,trace))
+		List<byte> trace = new List<byte>{0};
+		if(data.splitPolicy(position,boxLength,trace.ToArray()))
 		{
 			float newLength = boxLength/2;
-			int newTraceSize = trace.Length;
-			List<byte> newTrace = new List<byte>(trace);
-			newTrace.Add(0);
-			child = new Octree[8];
+			queuedItems += 8;
+			trace.Add(0);
 			for (byte i = 0; i < 8; i++) {
-				newTrace[newTraceSize] = i;
-				child[i] = new Octree(data,getChildPos(position,boxLength,i),newLength,newTrace.ToArray());
-				child[i].Split();
+				trace[1] = i;
+				ThreadObject tO = new ThreadObject(){
+					trace = trace.ToArray(),
+					length = newLength,
+					pos = GetChildPos(position,boxLength,i),
+				};
+				ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread),tO);
 			}
-
+		}
+		else{
+			leaves.Add(trace.ToArray());
 		}
 	}
 
-	public static Vector3 getChildPos(Vector3 oldCenter, float oldLength, byte childNum)
+	private void SplitThread(object a)//byte[] trace,ref float length)
+	{
+		byte[] trace = ((ThreadObject)a).trace;
+		float length = ((ThreadObject)a).length;
+		Vector3 cellPos = ((ThreadObject)a).pos;
+		if(data.splitPolicy(cellPos,length,trace))
+		{
+			List<byte> newTrace = new List<byte>(trace);
+			newTrace.Add(0);
+			float newLength = length/2;
+			Interlocked.Add(ref queuedItems,8);
+			for (byte i = 0; i < 8; i++) {
+				newTrace[trace.Length] = i;
+				ThreadObject tO = new ThreadObject(){
+					trace = newTrace.ToArray(),
+					length = newLength,
+					pos = GetChildPos(cellPos,length,i)
+				};
+				ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread),tO);
+			}
+		}
+		else{
+			lock(_lock){
+				leaves.Add(trace);
+			}
+		}
+		Interlocked.Decrement(ref queuedItems);
+		if(queuedItems==0)
+		{
+			Debug.Log("Split complete");
+			Debug.Log(leaves.Count+" leaves.");
+		}
+	}
+
+	public static UInt64 ChildTrace(UInt64 trace){
+		byte level = TraceToLevel(trace);
+		return LevelToTrace((byte)(level+1))+8*(trace-LevelToTrace(level));
+	}
+
+	public static UInt64 ChildTrace(UInt64 trace,byte level){
+		return LevelToTrace((byte)(level+1))+8*(trace-LevelToTrace(level));
+	}
+	
+	public static byte TraceToLevel(UInt64 trace)
+	{
+		return (byte)(NMath.Log2_64((7*trace/8)+1)/3);
+	}
+
+	public static UInt64 LevelToTrace(byte level)
+	{
+		return (UInt64)(1<<(3*level) - 1)*8/7;
+	}
+
+	public Vector3 TraceToPosition(byte[] trace)
+	{
+		Vector3 pos = position;
+		float len = boxLength;
+		for (int i = 1; i < trace.Length; i++) {
+			pos = GetChildPos(pos,len,trace[i]);
+			len = len/2;
+		}
+		return pos;
+	}
+
+	public Vector3 TraceToPosition(UInt64 trace)
+	{
+		if(trace==0)
+			return position;
+		UInt64 level = NMath.Log2_64(7*trace/8+1)/3ul -1ul;
+		Vector3 pos = position;
+		float len = boxLength;
+		UInt64 nCells = NMath.IntPow(8,level);
+		while(level>0){
+			UInt64 rPos = trace - nCells/8;
+			byte childNum = (byte)(8*rPos/nCells);
+			pos = GetChildPos(pos,len,childNum);
+			len = len/2;
+			nCells = nCells/8;
+			level--;
+		}
+		return pos;
+	}
+
+	public static Vector3 GetChildPos(Vector3 oldCenter, float oldLength, byte childNum)
 	{
 		Vector3 result;
 		Vector3 diff;
@@ -108,7 +202,7 @@ public class Octree
 		return result;
 	}
 
-	public static Vector3 getCornerPos(Vector3 center, float length, byte cornerNum)
+	public static Vector3 GetCornerPos(Vector3 center, float length, byte cornerNum)
 	{
 		Vector3 result;
 		Vector3 diff;
@@ -158,7 +252,7 @@ public class Octree
 	{
 		Vector3[] results = new Vector3[8];
 		for (byte i = 0; i < 8; i++) {
-			results[i] = getCornerPos(center,length,i);
+			results[i] = GetCornerPos(center,length,i);
 		}
 		return results;
 	}
@@ -170,98 +264,98 @@ public class Octree
 		switch(posNum)
 		{
 		case 0:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,1);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,1);
 			result = 0.5f*(c0+c1);
 			break;
 		case 1:
-			c0 = getCornerPos(center,length,1);
-			c1 = getCornerPos(center,length,2);
+			c0 = GetCornerPos(center,length,1);
+			c1 = GetCornerPos(center,length,2);
 			result = 0.5f*(c0+c1);
 			break;
 		case 2:
-			c0 = getCornerPos(center,length,2);
-			c1 = getCornerPos(center,length,3);
+			c0 = GetCornerPos(center,length,2);
+			c1 = GetCornerPos(center,length,3);
 			result = 0.5f*(c0+c1);
 			break;
 		case 3:
-			c0 = getCornerPos(center,length,3);
-			c1 = getCornerPos(center,length,0);
+			c0 = GetCornerPos(center,length,3);
+			c1 = GetCornerPos(center,length,0);
 			result = 0.5f*(c0+c1);
 			break;
 		case 4:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,2);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,2);
 			result = 0.5f*(c0+c1);
 			break;
 		case 5:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,4);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,4);
 			result = 0.5f*(c0+c1);
 			break;
 		case 6:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,5);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,5);
 			result = 0.5f*(c0+c1);
 			break;
 		case 7:
-			c0 = getCornerPos(center,length,1);
-			c1 = getCornerPos(center,length,5);
+			c0 = GetCornerPos(center,length,1);
+			c1 = GetCornerPos(center,length,5);
 			result = 0.5f*(c0+c1);
 			break;
 		case 8:
-			c0 = getCornerPos(center,length,1);
-			c1 = getCornerPos(center,length,6);
+			c0 = GetCornerPos(center,length,1);
+			c1 = GetCornerPos(center,length,6);
 			result = 0.5f*(c0+c1);
 			break;
 		case 9:
-			c0 = getCornerPos(center,length,2);
-			c1 = getCornerPos(center,length,6);
+			c0 = GetCornerPos(center,length,2);
+			c1 = GetCornerPos(center,length,6);
 			result = 0.5f*(c0+c1);
 			break;
 		case 10:
-			c0 = getCornerPos(center,length,2);
-			c1 = getCornerPos(center,length,7);
+			c0 = GetCornerPos(center,length,2);
+			c1 = GetCornerPos(center,length,7);
 			result = 0.5f*(c0+c1);
 			break;
 		case 11:
-			c0 = getCornerPos(center,length,3);
-			c1 = getCornerPos(center,length,7);
+			c0 = GetCornerPos(center,length,3);
+			c1 = GetCornerPos(center,length,7);
 			result = 0.5f*(c0+c1);
 			break;
 		case 12:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,7);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,7);
 			result = 0.5f*(c0+c1);
 			break;
 		case 13:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,6);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,6);
 			result = 0.5f*(c0+c1);
 			break;
 		case 14:
-			c0 = getCornerPos(center,length,4);
-			c1 = getCornerPos(center,length,5);
+			c0 = GetCornerPos(center,length,4);
+			c1 = GetCornerPos(center,length,5);
 			result = 0.5f*(c0+c1);
 			break;
 		case 15:
-			c0 = getCornerPos(center,length,5);
-			c1 = getCornerPos(center,length,6);
+			c0 = GetCornerPos(center,length,5);
+			c1 = GetCornerPos(center,length,6);
 			result = 0.5f*(c0+c1);
 			break;
 		case 16:
-			c0 = getCornerPos(center,length,6);
-			c1 = getCornerPos(center,length,7);
+			c0 = GetCornerPos(center,length,6);
+			c1 = GetCornerPos(center,length,7);
 			result = 0.5f*(c0+c1);
 			break;
 		case 17:
-			c0 = getCornerPos(center,length,0);
-			c1 = getCornerPos(center,length,4);
+			c0 = GetCornerPos(center,length,0);
+			c1 = GetCornerPos(center,length,4);
 			result = 0.5f*(c0+c1);
 			break;
 		case 18:
-			c0 = getCornerPos(center,length,4);
-			c1 = getCornerPos(center,length,6);
+			c0 = GetCornerPos(center,length,4);
+			c1 = GetCornerPos(center,length,6);
 			result = 0.5f*(c0+c1);
 			break;
 		default:
@@ -280,4 +374,6 @@ public class Octree
 		}
 		return results;
 	}
+
+
 }
