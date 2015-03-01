@@ -10,6 +10,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.Threading;
 using UnityEngine;
 using NuHash.UsefulUtilities;
@@ -19,12 +20,13 @@ public class Octree
 	public byte[] baseTrace;
 	public Vector3 position;
 	public float boxLength;
-	List<byte[]> leaves = new List<byte[]>();
+	List<ReadOnlyCollection<byte>> leaves = new List<ReadOnlyCollection<byte>>(6000000);
 	Int64 queuedItems;
+
 	readonly object _lock = new object();
 
 	private class ThreadObject{
-		public byte[] trace;
+		public ReadOnlyCollection<byte> trace;
 		public float length;
 		public Vector3 pos;
 	}
@@ -53,15 +55,17 @@ public class Octree
 	public void Split()
 	{
 		List<byte> trace = new List<byte>{0};
-		if(data.splitPolicy(position,boxLength,trace.ToArray()))
+		if(data.splitPolicy(position,boxLength,trace.AsReadOnly()))
 		{
 			float newLength = boxLength/2;
 			queuedItems += 8;
 			trace.Add(0);
 			for (byte i = 0; i < 8; i++) {
 				trace[1] = i;
+				var currentTrace= trace.ToArray();
+
 				ThreadObject tO = new ThreadObject(){
-					trace = trace.ToArray(),
+					trace = Array.AsReadOnly(currentTrace),
 					length = newLength,
 					pos = GetChildPos(position,boxLength,i),
 				};
@@ -69,15 +73,16 @@ public class Octree
 			}
 		}
 		else{
-			leaves.Add(trace.ToArray());
+			leaves.Add(trace.AsReadOnly());
 		}
 	}
 
 	private void SplitThread(object a)//byte[] trace,ref float length)
 	{
-		byte[] trace = ((ThreadObject)a).trace;
+		var trace = ((ThreadObject)a).trace;
 		float length = ((ThreadObject)a).length;
 		Vector3 cellPos = ((ThreadObject)a).pos;
+		try {
 		if(data.splitPolicy(cellPos,length,trace))
 		{
 			List<byte> newTrace = new List<byte>(trace);
@@ -85,21 +90,33 @@ public class Octree
 			float newLength = length/2;
 			Interlocked.Add(ref queuedItems,8);
 			for (byte i = 0; i < 8; i++) {
-				newTrace[trace.Length] = i;
+				newTrace[trace.Count] = i;
+				var currentTrace= newTrace.ToArray();
 				ThreadObject tO = new ThreadObject(){
-					trace = newTrace.ToArray(),
+					trace = Array.AsReadOnly(currentTrace),
 					length = newLength,
 					pos = GetChildPos(cellPos,length,i)
 				};
-				ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread),tO);
+				try {
+					ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread),tO);
+				} catch (Exception ex) {
+					Debug.LogException(ex);
+				}
+
 			}
 		}
 		else{
 			lock(_lock){
 				leaves.Add(trace);
+					if(leaves.Count > 2878183)
+						Debug.Log ("OVER 9000");
 			}
 		}
+		} catch (Exception ex) {
+			Debug.Log ("IF");	
+		}
 		Interlocked.Decrement(ref queuedItems);
+
 		if(queuedItems==0)
 		{
 			Debug.Log("Split complete");
@@ -257,6 +274,18 @@ public class Octree
 		return results;
 	}
 
+	public static void GetCornersPos(Vector3 center, float length, ref Vector3[] results)
+	{
+		if(!(results.Length >= 8)){
+			throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
+		}
+		for (byte i = 0; i < 8; i++) {
+			results[i] = GetCornerPos(center,length,i);
+		}
+		return;
+	}
+
+	
 	public static Vector3 GetMidPointPos(Vector3 center, float length, byte posNum)
 	{
 		Vector3 result;
@@ -375,5 +404,15 @@ public class Octree
 		return results;
 	}
 
-
+	public static void GetMidPointsPos(Vector3 center, float length,ref Vector3[] results)
+	{
+		if(!(results.Length >= 8)){
+			throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
+		}
+		for (byte i = 0; i < 19; i++) {
+			results[i] = GetMidPointPos(center,length,i);
+		}
+		return;
+	}
+	
 }

@@ -11,9 +11,10 @@ using System;
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 public class OctreeData
 {
-	public delegate bool SplitPolicy(Vector3 coord,float length, byte[] trace);
+	public delegate bool SplitPolicy(Vector3 coord,float length,ReadOnlyCollection<byte> trace);
 	public SplitPolicy splitPolicy;
 	public delegate float ValueFunction(Vector3 coord);
 	public ValueFunction valueFunction;
@@ -27,7 +28,7 @@ public class OctreeData
 	
 	public float[] CalculateValues(Vector3[] positions)
 	{
-		List<float> results = new List<float>();
+		List<float> results = new List<float>(positions.Length);
 		for (int i = 0; i < positions.Length; i++) {
 			results.Add(valueFunction(positions[i]));
 		}
