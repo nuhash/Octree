@@ -20,13 +20,13 @@ public class Octree
 	public byte[] baseTrace;
 	public Vector3 position;
 	public float boxLength;
-	List<ReadOnlyCollection<byte>> leaves = new List<ReadOnlyCollection<byte>>(12000000);
+	List<List<byte>> leaves = new List<List<byte>>(100000000);
 	Int64 queuedItems;
-	List<ThreadObject> queuedLeaves = new List<ThreadObject>(6000000);
+	Stack<ThreadObject> queuedLeaves = new Stack<ThreadObject>(10000000);
 	readonly object _lock = new object();
 
-	private class ThreadObject{
-		public ReadOnlyCollection<byte> trace;
+	private struct ThreadObject{
+		public List<byte> trace;
 		public float length;
 		public Vector3 pos;
 	}
@@ -54,79 +54,88 @@ public class Octree
 
 	public void Split()
 	{
-		List<byte> trace = new List<byte>{0};
-		if(data.splitPolicy(position,boxLength,trace.AsReadOnly()))
-		{
+
 			float newLength = boxLength/2;
-			queuedItems += 8;
-			trace.Add(0);
 			for (byte i = 0; i < 8; i++) {
-				trace[1] = i;
+				List<byte> trace = new List<byte>{0,i};
 				ThreadObject tO = new ThreadObject(){
-					trace = Array.AsReadOnly(trace.ToArray()),
+					trace = trace,
 					length = newLength,
 					pos = GetChildPos(position,boxLength,i),
 				};
-				queuedLeaves.Add(tO);
+				queuedLeaves.Push(tO);
 				//ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread));
-				Thread thread = new Thread(new ThreadStart(SplitThread));
-				thread.Start();
 			}
-//			SplitThread();
-		}
-		else{
-			leaves.Add(trace.AsReadOnly());
-		}
+			Thread thread = new Thread(new ThreadStart(()=>SplitThread(0)));
+			thread.Start();
+			Thread thread1 = new Thread(new ThreadStart(()=>SplitThread(1)));
+			thread1.Start();
+			Thread thread2 = new Thread(new ThreadStart(()=>SplitThread(2)));
+			thread2.Start();
+			Thread thread3 = new Thread(new ThreadStart(()=>SplitThread(3)));
+			thread3.Start();
+			Thread thread4 = new Thread(new ThreadStart(()=>SplitThread(4)));
+			thread4.Start();
+			Thread thread5 = new Thread(new ThreadStart(()=>SplitThread(5)));
+			thread5.Start();
+			Thread thread6 = new Thread(new ThreadStart(()=>SplitThread(6)));
+			thread6.Start();
+			Thread thread7 = new Thread(new ThreadStart(()=>SplitThread(7)));
+			thread7.Start();
+//			SplitThread(0);
+
 	}
 
-	private void SplitThread()//byte[] trace,ref float length)
+	private void SplitThread(int tNum=1)//byte[] trace,ref float length)
 	{
+		int threadNum = tNum;
 		ThreadObject a;
 		lock(_lock){
-			a = queuedLeaves[queuedLeaves.Count-1];
-			queuedLeaves.RemoveAt(queuedLeaves.Count-1);
+			a = queuedLeaves.Pop();
 		}
 		while(true){
 			var trace = a.trace;
 			float length = a.length;
 			Vector3 cellPos = a.pos;
-			if(data.splitPolicy(cellPos,length,trace))
+			if(data.splitPolicy(cellPos,length,trace, threadNum))
 			{
-				List<byte> newTrace = new List<byte>(trace);
-				newTrace.Add(0);
+				//List<byte> newTrace = new List<byte>(trace);
+				//newTrace.Add(0);
+				int endPos = trace.Count;
+				trace.Add(7);
 				float newLength = length/2;
-				Interlocked.Add(ref queuedItems,8);
-				for (byte i = 0; i < 8; i++) {
-					newTrace[trace.Count] = i;
-					var currentTrace= newTrace.ToArray();
+				for (byte i = 0; i < 7; i++) {
+					List<byte> newTrace = new List<byte>(trace);
+					newTrace[endPos] = i;
 					ThreadObject tO = new ThreadObject(){
-						trace = Array.AsReadOnly(currentTrace),
+						trace = newTrace,
 						length = newLength,
 						pos = GetChildPos(cellPos,length,i)
 					};
 					lock(_lock){
-						queuedLeaves.Add(tO);
+						queuedLeaves.Push(tO);
 					}
-
 				}
+				a.length = newLength;
+				a.pos = GetChildPos(cellPos,length,7);
+				lock(_lock){
+					queuedLeaves.Push(a);
+				}
+				
 			}else{
 				lock(_lock){
 					leaves.Add(trace);
+					//Debug.Log (trace.Count-1);
 				}
 			}
-			Interlocked.Decrement(ref queuedItems);
 			lock(_lock){
 				if(queuedLeaves.Count <1)
 					break;
-				a = queuedLeaves[queuedLeaves.Count-1];
-				queuedLeaves.RemoveAt(queuedLeaves.Count-1);
+				a = queuedLeaves.Pop();
 			}
 		}
-		if(queuedItems==0)
-		{
-			Debug.Log("Split complete");
-			Debug.Log(leaves.Count+" leaves.");
-		}
+		Debug.Log("Split complete");
+		Debug.Log(leaves.Count+" leaves.");
 	}
 
 	public static UInt64 ChildTrace(UInt64 trace){
@@ -298,78 +307,78 @@ public class Octree
 		{
 		case 0:
 			diff = new Vector3(0,-length,-length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 1:
 			diff = new Vector3(length,-length,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 2:
 			diff = new Vector3(0,-length,length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 3:
 			diff = new Vector3(-length,-length,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 4:
 			diff = new Vector3(0,-length,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 5:
 			diff = new Vector3(-length,0,-length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 6:
 			diff = new Vector3(0,0,-length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 7:
 			diff = new Vector3(length,0,-length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 8:
 			diff = new Vector3(length,0,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 9:
 			diff = new Vector3(length,0,length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 10:
 			diff = new Vector3(0,0,length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 11:
 			diff = new Vector3(-length,0,length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 12:
 			diff = new Vector3(-length,0,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 13:
 			result = center;
 			break;
 		case 14:
 			diff = new Vector3(0,length,-length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 15:
 			diff = new Vector3(length,0,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 16:
 			diff = new Vector3(0,length,length);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 17:
 			diff = new Vector3(-length,length,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		case 18:
 			diff = new Vector3(0,length,0);
-			result = center + diff;
+			result = center + 0.5f*diff;
 			break;
 		default:
 			Debug.LogError("Invalid corner number");

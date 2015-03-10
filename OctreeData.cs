@@ -14,7 +14,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 public class OctreeData
 {
-	public delegate bool SplitPolicy(Vector3 coord,float length,ReadOnlyCollection<byte> trace);
+	public delegate bool SplitPolicy(Vector3 coord,float length,List<byte> trace,int threadNum=1);
 	public SplitPolicy splitPolicy;
 	public delegate float ValueFunction(Vector3 coord);
 	public ValueFunction valueFunction;
