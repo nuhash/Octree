@@ -11,29 +11,49 @@ using System;
 using UnityEngine;
 using System.Collections;
 using System.Collections.Generic;
-public class OctreeFunctions
+using System.Collections.ObjectModel;
+public class OctreeData
 {
-	public delegate bool SplitPolicy(Vector3 coord,float length, byte[] trace);
+	public delegate bool SplitPolicy(Vector3 coord,float length,OctreeLeaf trace,int threadNum=1);
 	public SplitPolicy splitPolicy;
+    public delegate bool LeafFunction(OctreeLeaf leaf, Vector3 pos, float len, int threadNum);
+    public LeafFunction leafFunction;
 	public delegate float ValueFunction(Vector3 coord);
 	public ValueFunction valueFunction;
 	public delegate Vector3 GradientFunction(Vector3 coord);
 	public GradientFunction gradientFunction;
 
-	public OctreeFunctions ()
+	public OctreeData ()
 	{
-
+		
 	}
-
+	
 	public float[] CalculateValues(Vector3[] positions)
 	{
-		List<float> results = new List<float>();
+		List<float> results = new List<float>(positions.Length);
 		for (int i = 0; i < positions.Length; i++) {
 			results.Add(valueFunction(positions[i]));
 		}
 		return results.ToArray();
 	}
+
+	public void CalculateValues(Vector3[] positions, ref float[] results)
+	{
+		if(!(results.Length >= positions.Length)){
+			throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
+		}
+		for (int i = 0; i < positions.Length; i++) {
+			results[i]=valueFunction(positions[i]);
+		}
+		return;
+	}
+
 	public float CalculateValue(Vector3 position){
 		return valueFunction(position);
 	}
+
+    public Vector3 CalculateGrad(Vector3 position)
+    {
+        return gradientFunction(position);
+    }
 }
