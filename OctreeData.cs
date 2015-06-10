@@ -14,8 +14,10 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 public class OctreeData
 {
-	public delegate bool SplitPolicy(Vector3 coord,float length,List<byte> trace,int threadNum=1);
+	public delegate bool SplitPolicy(Vector3 coord,float length,OctreeLeaf trace,int threadNum=1);
 	public SplitPolicy splitPolicy;
+    public delegate bool LeafFunction(OctreeLeaf leaf, Vector3 pos, float len, int threadNum);
+    public LeafFunction leafFunction;
 	public delegate float ValueFunction(Vector3 coord);
 	public ValueFunction valueFunction;
 	public delegate Vector3 GradientFunction(Vector3 coord);
@@ -49,4 +51,9 @@ public class OctreeData
 	public float CalculateValue(Vector3 position){
 		return valueFunction(position);
 	}
+
+    public Vector3 CalculateGrad(Vector3 position)
+    {
+        return gradientFunction(position);
+    }
 }

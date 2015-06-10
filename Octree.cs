@@ -14,75 +14,73 @@ using System.Collections.ObjectModel;
 using System.Threading;
 using UnityEngine;
 using NuHash.UsefulUtilities;
-public class Octree
+public class Octree : INtree
 {
-	public OctreeData data;
-	public byte[] baseTrace;
+	//public OctreeData data;
+    public delegate bool SplitPolicy(Vector3 coord, float length, OctreeLeaf trace, int threadNum = 1);
+    SplitPolicy _splitPolicy;
+    public delegate bool LeafFunction(OctreeLeaf leaf, Vector3 pos, float len, int threadNum);
+    LeafFunction _leafFunction;
+	public OctreeLeaf baseTrace;
 	public Vector3 position;
 	public float boxLength;
-	List<List<byte>> leaves = new List<List<byte>>(100000000);
-	Int64 queuedItems;
-	Stack<ThreadObject> queuedLeaves = new Stack<ThreadObject>(10000000);
+	List<OctreeLeaf> leaves = new List<OctreeLeaf>();
+	Int64 queuedItems=8;
+	Stack<ThreadObject> queuedLeaves = new Stack<ThreadObject>();
 	readonly object _lock = new object();
 
+    static readonly Vector3[] midPointVectors = { new Vector3(0, -1, -1), new Vector3(1, -1, 0), new Vector3(0, -1, 1), new Vector3(-1, -1, 0), new Vector3(0, -1, 0), new Vector3(-1, 0, -1), new Vector3(0, 0, -1), new Vector3(1, 0, -1), new Vector3(1, 0, 0), new Vector3(1, 0, 1), new Vector3(0, 0, 1), new Vector3(-1, 0, 1), new Vector3(-1, 0, 0), Vector3.zero, new Vector3(0, 1, -1), new Vector3(1, 0, 0), new Vector3(0, 1, 1), new Vector3(-1, 1, 0), new Vector3(0, 1, 0) };
+    static readonly Vector3[] cornerPointVectors = { new Vector3(-1, -1, -1), new Vector3(1, -1, -1), new Vector3(1, -1, 1), new Vector3(-1, -1, 1), new Vector3(-1, 1, -1), new Vector3(1, 1, -1), Vector3.one, new Vector3(-1, 1, 1) };
 	private struct ThreadObject{
-		public List<byte> trace;
+		public OctreeLeaf trace;
 		public float length;
 		public Vector3 pos;
 	}
-
-//	public bool IsSplit {
-//		get{return (child != null);}
-//	}
-//	
-//	public Octree Child(int idx) {
-//		if(idx>7 || idx<0 || !this.IsSplit)
-//		{
-//			Debug.LogError("No children available or index is out of range");
-//			return null;
-//		}
-//		return child[idx];
-//	}
 	
-	public Octree (OctreeData data,Vector3 position,float length,byte[] trace)
+	public Octree (SplitPolicy splitPolicy,Vector3 position,float length,OctreeLeaf trace)
 	{
 		this.baseTrace = trace;
 		this.position = position;
-		this.data = data;
+        _splitPolicy = splitPolicy;
 		this.boxLength = length;
 	}
 
 	public void Split()
 	{
 
-			float newLength = boxLength/2;
-			for (byte i = 0; i < 8; i++) {
-				List<byte> trace = new List<byte>{0,i};
-				ThreadObject tO = new ThreadObject(){
-					trace = trace,
-					length = newLength,
-					pos = GetChildPos(position,boxLength,i),
-				};
-				queuedLeaves.Push(tO);
-				//ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread));
-			}
-			Thread thread = new Thread(new ThreadStart(()=>SplitThread(0)));
-			thread.Start();
-			Thread thread1 = new Thread(new ThreadStart(()=>SplitThread(1)));
-			thread1.Start();
-			Thread thread2 = new Thread(new ThreadStart(()=>SplitThread(2)));
-			thread2.Start();
-			Thread thread3 = new Thread(new ThreadStart(()=>SplitThread(3)));
-			thread3.Start();
-			Thread thread4 = new Thread(new ThreadStart(()=>SplitThread(4)));
-			thread4.Start();
-			Thread thread5 = new Thread(new ThreadStart(()=>SplitThread(5)));
-			thread5.Start();
-			Thread thread6 = new Thread(new ThreadStart(()=>SplitThread(6)));
-			thread6.Start();
-			Thread thread7 = new Thread(new ThreadStart(()=>SplitThread(7)));
-			thread7.Start();
-//			SplitThread(0);
+		float newLength = boxLength/2;
+		for (byte i = 0; i < 8; i++) {
+			ThreadObject tO = new ThreadObject(){
+				trace = i,
+				length = newLength,
+				pos = GetChildPos(position,boxLength,i),
+			};
+			queuedLeaves.Push(tO);
+			//ThreadPool.QueueUserWorkItem(new WaitCallback(SplitThread));
+		}
+		
+        /*Thread thread = new Thread(new ThreadStart(()=>SplitThread(0)));
+        thread.Name = "Octree Thread 0";
+		thread.Start();
+		Thread thread1 = new Thread(new ThreadStart(()=>SplitThread(1)));
+        thread1.Name = "Octree Thread 1";
+		thread1.Start();
+		Thread thread2 = new Thread(new ThreadStart(()=>SplitThread(2)));
+        thread2.Name = "Octree Thread 2";
+		thread2.Start();
+		Thread thread3 = new Thread(new ThreadStart(()=>SplitThread(3)));
+        thread3.Name = "Octree Thread 3";
+        thread3.Start();
+
+		Thread thread4 = new Thread(new ThreadStart(()=>SplitThread(4)));
+		thread4.Start();
+		Thread thread5 = new Thread(new ThreadStart(()=>SplitThread(5)));
+		thread5.Start();
+		Thread thread6 = new Thread(new ThreadStart(()=>SplitThread(6)));
+		thread6.Start();
+		Thread thread7 = new Thread(new ThreadStart(()=>SplitThread(7)));
+		thread7.Start();*/
+		SplitThread(0);
 
 	}
 
@@ -97,46 +95,57 @@ public class Octree
 			var trace = a.trace;
 			float length = a.length;
 			Vector3 cellPos = a.pos;
-			if(data.splitPolicy(cellPos,length,trace, threadNum))
+			if(_splitPolicy(cellPos,length,trace, threadNum))
 			{
 				//List<byte> newTrace = new List<byte>(trace);
 				//newTrace.Add(0);
-				int endPos = trace.Count;
-				trace.Add(7);
 				float newLength = length/2;
-				for (byte i = 0; i < 7; i++) {
-					List<byte> newTrace = new List<byte>(trace);
-					newTrace[endPos] = i;
-					ThreadObject tO = new ThreadObject(){
-						trace = newTrace,
-						length = newLength,
-						pos = GetChildPos(cellPos,length,i)
-					};
-					lock(_lock){
-						queuedLeaves.Push(tO);
-					}
-				}
-				a.length = newLength;
-				a.pos = GetChildPos(cellPos,length,7);
-				lock(_lock){
-					queuedLeaves.Push(a);
-				}
+                lock (_lock)
+                {
+                    queuedItems+=8;
+                    for (byte i = 0; i < 8; i++)
+                    {
+
+                        ThreadObject tO = new ThreadObject()
+                        {
+                            trace = trace.GetChild(i),
+                            length = newLength,
+                            pos = GetChildPos(cellPos, length, i)
+                        };
+
+                        queuedLeaves.Push(tO);
+
+                    }
+                }
+                
 				
 			}else{
 				lock(_lock){
 					leaves.Add(trace);
-					//Debug.Log (trace.Count-1);
 				}
 			}
 			lock(_lock){
-				if(queuedLeaves.Count <1)
-					break;
+                queuedItems--;
+                if (queuedItems == 0)
+                {
+                    if (queuedLeaves.Count == 0)
+                    {
+                        Debug.Log("Split complete");
+                        Debug.Log(leaves.Count + " leaves.");
+                        queuedLeaves.TrimExcess();
+                        leaves.Sort();
+                    }
+                    break;
+                }
 				a = queuedLeaves.Pop();
 			}
 		}
-		Debug.Log("Split complete");
-		Debug.Log(leaves.Count+" leaves.");
 	}
+
+    public List<OctreeLeaf> GetLeaves()
+    {
+        return leaves;
+    }
 
 	public static UInt64 ChildTrace(UInt64 trace){
 		byte level = TraceToLevel(trace);
@@ -187,96 +196,14 @@ public class Octree
 		return pos;
 	}
 
-	public static Vector3 GetChildPos(Vector3 oldCenter, float oldLength, byte childNum)
+	public static Vector3 GetChildPos(Vector3 center, float length, byte childNum)
 	{
-		Vector3 result;
-		Vector3 diff;
-		switch(childNum)
-		{
-		case 0:
-			diff = -0.25f*new Vector3(oldLength,oldLength,oldLength);
-			result = oldCenter + diff;
-			break;
-		case 1:
-			diff = 0.25f*new Vector3(oldLength,-oldLength,-oldLength);
-			result = oldCenter + diff;
-			break;
-		case 2:
-			diff = 0.25f*new Vector3(oldLength,-oldLength,oldLength);
-			result = oldCenter + diff;
-			break;
-		case 3:
-			diff = 0.25f*new Vector3(-oldLength,-oldLength,oldLength);
-			result = oldCenter + diff;
-			break;
-		case 4:
-			diff = 0.25f*new Vector3(-oldLength,oldLength,-oldLength);
-			result = oldCenter + diff;
-			break;
-		case 5:
-			diff = 0.25f*new Vector3(oldLength,oldLength,-oldLength);
-			result = oldCenter + diff;
-			break;
-		case 6:
-			diff = 0.25f*new Vector3(oldLength,oldLength,oldLength);
-			result = oldCenter + diff;
-			break;
-		case 7:
-			diff = 0.25f*new Vector3(-oldLength,oldLength,oldLength);
-			result = oldCenter + diff;
-			break;
-		default:
-			Debug.LogError("Invalid child number");
-			result = Vector3.zero;
-			break;
-		}
-		return result;
+        return center + 0.25f * length * cornerPointVectors[childNum];
 	}
 
 	public static Vector3 GetCornerPos(Vector3 center, float length, byte cornerNum)
 	{
-		Vector3 result;
-		Vector3 diff;
-		switch(cornerNum)
-		{
-		case 0:
-			diff = -0.5f*new Vector3(length,length,length);
-			result = center + diff;
-			break;
-		case 1:
-			diff = 0.5f*new Vector3(length,-length,-length);
-			result = center + diff;
-			break;
-		case 2:
-			diff = 0.5f*new Vector3(length,-length,length);
-			result = center + diff;
-			break;
-		case 3:
-			diff = 0.5f*new Vector3(-length,-length,length);
-			result = center + diff;
-			break;
-		case 4:
-			diff = 0.5f*new Vector3(-length,length,-length);
-			result = center + diff;
-			break;
-		case 5:
-			diff = 0.5f*new Vector3(length,length,-length);
-			result = center + diff;
-			break;
-		case 6:
-			diff = 0.5f*new Vector3(length,length,length);
-			result = center + diff;
-			break;
-		case 7:
-			diff = 0.5f*new Vector3(-length,length,length);
-			result = center + diff;
-			break;
-		default:
-			Debug.LogError("Invalid corner number");
-			result = Vector3.zero;
-			break;
-		}
-		return result;
+		return center + 0.5f*length*cornerPointVectors[cornerNum];
 	}
 
 	public static Vector3[] GetCornersPos(Vector3 center, float length)
@@ -288,104 +215,32 @@ public class Octree
 		return results;
 	}
 
+    public static void GetChildrenPos(Vector3 center, float length, ref Vector3[] results)
+    {
+        if (!(results.Length >= 8))
+        {
+            throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
+        }
+        for (byte i = 0; i < 8; i++)
+        {
+            results[i] = GetCornerPos(center, length, i);
+        }
+    }
+
 	public static void GetCornersPos(Vector3 center, float length, ref Vector3[] results)
 	{
 		if(!(results.Length >= 8)){
 			throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
 		}
 		for (byte i = 0; i < 8; i++) {
-			results[i] = GetCornerPos(center,length,i);
+            results[i] = center + 0.5f * length * cornerPointVectors[i];
 		}
-		return;
 	}
 
 	
 	public static Vector3 GetMidPointPos(Vector3 center, float length, byte posNum)
 	{
-		Vector3 result,diff;
-		switch(posNum)
-		{
-		case 0:
-			diff = new Vector3(0,-length,-length);
-			result = center + 0.5f*diff;
-			break;
-		case 1:
-			diff = new Vector3(length,-length,0);
-			result = center + 0.5f*diff;
-			break;
-		case 2:
-			diff = new Vector3(0,-length,length);
-			result = center + 0.5f*diff;
-			break;
-		case 3:
-			diff = new Vector3(-length,-length,0);
-			result = center + 0.5f*diff;
-			break;
-		case 4:
-			diff = new Vector3(0,-length,0);
-			result = center + 0.5f*diff;
-			break;
-		case 5:
-			diff = new Vector3(-length,0,-length);
-			result = center + 0.5f*diff;
-			break;
-		case 6:
-			diff = new Vector3(0,0,-length);
-			result = center + 0.5f*diff;
-			break;
-		case 7:
-			diff = new Vector3(length,0,-length);
-			result = center + 0.5f*diff;
-			break;
-		case 8:
-			diff = new Vector3(length,0,0);
-			result = center + 0.5f*diff;
-			break;
-		case 9:
-			diff = new Vector3(length,0,length);
-			result = center + 0.5f*diff;
-			break;
-		case 10:
-			diff = new Vector3(0,0,length);
-			result = center + 0.5f*diff;
-			break;
-		case 11:
-			diff = new Vector3(-length,0,length);
-			result = center + 0.5f*diff;
-			break;
-		case 12:
-			diff = new Vector3(-length,0,0);
-			result = center + 0.5f*diff;
-			break;
-		case 13:
-			result = center;
-			break;
-		case 14:
-			diff = new Vector3(0,length,-length);
-			result = center + 0.5f*diff;
-			break;
-		case 15:
-			diff = new Vector3(length,0,0);
-			result = center + 0.5f*diff;
-			break;
-		case 16:
-			diff = new Vector3(0,length,length);
-			result = center + 0.5f*diff;
-			break;
-		case 17:
-			diff = new Vector3(-length,length,0);
-			result = center + 0.5f*diff;
-			break;
-		case 18:
-			diff = new Vector3(0,length,0);
-			result = center + 0.5f*diff;
-			break;
-		default:
-			Debug.LogError("Invalid corner number");
-			result = Vector3.zero;
-			break;
-		}
-		return result;
+		return center + 0.5f*length * midPointVectors[posNum];
 	}
 
 	public static Vector3[] GetMidPointsPos(Vector3 center, float length)
@@ -403,9 +258,8 @@ public class Octree
 			throw new IndexOutOfRangeException("Number of elements in results array is not enough to accomodate positions");
 		}
 		for (byte i = 0; i < 19; i++) {
-			results[i] = GetMidPointPos(center,length,i);
+            results[i] = center + 0.5f * length * midPointVectors[i];
 		}
-
 		return;
 	}
 	
